@@ -1,0 +1,58 @@
+{
+  "name": "@ajuarezso/capacitor-liquid-glass",
+  "version": "0.1.0",
+  "description": "iOS 26 Liquid Glass native chrome (TabBar, NavigationBar, Alerts, Sheets) for Capacitor apps. Falls back gracefully on iOS < 26 and Android.",
+  "main": "dist/plugin.cjs.js",
+  "module": "dist/esm/index.js",
+  "types": "dist/esm/index.d.ts",
+  "unpkg": "dist/plugin.js",
+  "files": [
+    "dist/",
+    "ios/Sources/",
+    "Package.swift",
+    "CapacitorLiquidGlass.podspec"
+  ],
+  "author": "Anthony Juarez Solis <anthonyjuarezsolis@icloud.com>",
+  "license": "MIT",
+  "keywords": [
+    "capacitor",
+    "plugin",
+    "ios",
+    "liquid-glass",
+    "ios-26",
+    "tabbar",
+    "navigation",
+    "glassmorphism"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anthonyjuarezsolis/capacitor-liquid-glass.git"
+  },
+  "bugs": {
+    "url": "https://github.com/anthonyjuarezsolis/capacitor-liquid-glass/issues"
+  },
+  "homepage": "https://github.com/anthonyjuarezsolis/capacitor-liquid-glass#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "npm run clean && npm run tsc && rollup -c rollup.config.mjs",
+    "clean": "rimraf ./dist",
+    "tsc": "tsc",
+    "watch": "tsc --watch"
+  },
+  "devDependencies": {
+    "@capacitor/core": "^8.0.0",
+    "rimraf": "^5.0.0",
+    "rollup": "^4.9.0",
+    "typescript": "^5.4.0"
+  },
+  "peerDependencies": {
+    "@capacitor/core": "^8.0.0"
+  },
+  "capacitor": {
+    "ios": {
+      "src": "ios"
+    }
+  }
+}
