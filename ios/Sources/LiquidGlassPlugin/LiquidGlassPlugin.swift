@@ -12,9 +12,13 @@ public class LiquidGlassPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "setSelectedTab", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "updateTabBadge", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getTabBarLayout", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "showSearchBar", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "hideSearchBar", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "clearSearchText", returnType: CAPPluginReturnPromise),
     ]
 
     private var tabBarOverlay: LiquidGlassTabBarOverlay?
+    private var searchOverlay: LiquidGlassSearchOverlay?
 
     @objc func showTabBar(_ call: CAPPluginCall) {
         guard let rawItems = call.getArray("items") as? [[String: Any]] else {
@@ -23,6 +27,7 @@ public class LiquidGlassPlugin: CAPPlugin, CAPBridgedPlugin {
         }
         let selectedIndex = call.getInt("selectedIndex") ?? 0
         let tintHex = call.getString("tintColor")
+        let styleRaw = call.getString("tabBarStyle") ?? "default"
 
         let items = rawItems.compactMap { LiquidGlassTabItem(dictionary: $0) }
         guard !items.isEmpty else {
@@ -32,7 +37,7 @@ public class LiquidGlassPlugin: CAPPlugin, CAPBridgedPlugin {
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            self.presentTabBar(items: items, selectedIndex: selectedIndex, tintHex: tintHex)
+            self.presentTabBar(items: items, selectedIndex: selectedIndex, tintHex: tintHex, styleRaw: styleRaw)
             call.resolve()
         }
     }
@@ -85,8 +90,74 @@ public class LiquidGlassPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    private func presentTabBar(items: [LiquidGlassTabItem], selectedIndex: Int, tintHex: String?) {
+    // MARK: - Search Bar
+
+    @objc func showSearchBar(_ call: CAPPluginCall) {
+        let placeholder = call.getString("placeholder")
+        let initialText = call.getString("initialText")
+        let cancelText = call.getString("cancelText")
+        let tintHex = call.getString("tintColor")
+        let hideCancelButton = call.getBool("hideCancelButton") ?? false
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.presentSearchBar(
+                placeholder: placeholder,
+                initialText: initialText,
+                cancelText: cancelText,
+                tintHex: tintHex,
+                hideCancelButton: hideCancelButton
+            )
+            call.resolve()
+        }
+    }
+
+    @objc func hideSearchBar(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { [weak self] in
+            self?.searchOverlay?.hide()
+            call.resolve()
+        }
+    }
+
+    @objc func clearSearchText(_ call: CAPPluginCall) {
+        DispatchQueue.main.async { [weak self] in
+            self?.searchOverlay?.clearText()
+            call.resolve()
+        }
+    }
+
+    private func presentSearchBar(
+        placeholder: String?,
+        initialText: String?,
+        cancelText: String?,
+        tintHex: String?,
+        hideCancelButton: Bool
+    ) {
         guard let window = UIApplication.shared.capacitorWindow else { return }
+
+        if searchOverlay == nil {
+            let overlay = LiquidGlassSearchOverlay()
+            overlay.delegate = self
+            searchOverlay = overlay
+        }
+
+        searchOverlay?.configure(
+            placeholder: placeholder,
+            initialText: initialText,
+            cancelText: cancelText,
+            tintHex: tintHex,
+            hideCancelButton: hideCancelButton
+        )
+        searchOverlay?.show(on: window)
+    }
+
+    private func presentTabBar(items: [LiquidGlassTabItem], selectedIndex: Int, tintHex: String?, styleRaw: String) {
+        // CRÍTICO: usar `bridge?.viewController` (el VC que contiene el
+        // WKWebView de Capacitor) en lugar del `rootViewController` del
+        // window. iOS 26 aplica Liquid Glass automáticamente al UITabBar
+        // solo cuando está en la jerarquía del VC del webview. El rootVC
+        // del window puede ser un container distinto y romper el adopt.
+        guard let hostVC = bridge?.viewController else { return }
 
         if tabBarOverlay == nil {
             let overlay = LiquidGlassTabBarOverlay()
@@ -102,9 +173,25 @@ public class LiquidGlassPlugin: CAPPlugin, CAPBridgedPlugin {
             tabBarOverlay = overlay
         }
 
-        tabBarOverlay?.attach(to: window)
-        tabBarOverlay?.configure(items: items, selectedIndex: selectedIndex, tintHex: tintHex)
+        let style = LiquidGlassTabBarStyle(rawValue: styleRaw) ?? .default
+        tabBarOverlay?.attach(to: hostVC)
+        tabBarOverlay?.configure(items: items, selectedIndex: selectedIndex, tintHex: tintHex, style: style)
         tabBarOverlay?.show()
+    }
+}
+
+// MARK: - LiquidGlassSearchOverlayDelegate
+extension LiquidGlassPlugin: LiquidGlassSearchOverlayDelegate {
+    func searchOverlayDidChangeText(_ text: String) {
+        notifyListeners("searchTextChanged", data: ["text": text])
+    }
+
+    func searchOverlayDidSubmit(_ text: String) {
+        notifyListeners("searchSubmitted", data: ["text": text])
+    }
+
+    func searchOverlayDidCancel() {
+        notifyListeners("searchCancelled", data: [:])
     }
 }
 

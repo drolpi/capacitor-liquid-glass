@@ -1,10 +1,35 @@
 # @ajuarezso/capacitor-liquid-glass
 
-Native iOS 26 **Liquid Glass** chrome (TabBar, NavigationBar, Alerts, Sheets, Menus) for Capacitor apps. Falls back gracefully on iOS &lt; 26 and Android (no-op), so your app keeps its own CSS chrome on unsupported platforms.
+> **Real iOS 26 Liquid Glass native chrome (TabBar + SearchBar + roadmap for more) for Capacitor apps.**
+> The only Capacitor plugin (as of 2026) that exposes Apple's authentic `.glassEffect()` rendering — not a CSS `backdrop-filter` approximation.
 
-This plugin exists because, as of 2026, no existing Capacitor plugin exposes the real iOS 26 `.glassEffect()` rendered by UIKit — only CSS `backdrop-filter` approximations. This plugin floats a real `UITabBar` (and friends) as a native overlay above your `WKWebView`, so you get the actual Apple-native morphing, refraction, and tint animations of Liquid Glass on iOS 26+.
+[![npm version](https://img.shields.io/npm/v/@ajuarezso/capacitor-liquid-glass.svg)](https://www.npmjs.com/package/@ajuarezso/capacitor-liquid-glass)
+[![license](https://img.shields.io/npm/l/@ajuarezso/capacitor-liquid-glass.svg)](./LICENSE)
 
-> Status: `0.1.0` — **TabBar only**. NavigationBar, Toolbar, Sheet, Alert, Menu, Popover are on the roadmap.
+> 🇪🇸 Versión en español: [README.es.md](./README.es.md)
+
+## Why this exists
+
+iOS 26 introduced **Liquid Glass** — a new system material that combines blur + dynamic refraction + edge highlights that shift with underlying content + morphing transitions + touch-reactive deformation + tinted/clear variants. Apple uses it for the new TabBar, NavigationBar, Sheets, Menus, the Dynamic Island, the Music app, the App Store, and Control Center.
+
+**As of 2026, this is the only Capacitor plugin that exposes the real `UIGlassEffect`** via native overlays floating above the WebView. Web alternatives like CSS `backdrop-filter`, `mix-blend-mode`, and SVG filters can mimic the static blur but cannot reproduce:
+
+- Dynamic refraction (light bending based on movement)
+- Edge highlights that shift with underlying content
+- Morphing transitions between elements (e.g., tab pill sliding between items)
+- Touch-reactive deformation (the "squish" when pressed)
+- System-level Dynamic Island and Control Center integration
+
+These require private Metal shaders that Apple does not expose to `WKWebView`. The only path is a **native overlay** anchored above the WebView — which is exactly what this plugin does.
+
+## What's shipped today (v0.3.x)
+
+| widget | iOS 26+ | iOS 15-25 | Android | Web |
+|---|---|---|---|---|
+| **TabBar** | ✅ Real Liquid Glass | ⚠️ Classic `UITabBar` | ❌ no-op | ❌ no-op |
+| **SearchBar** | ✅ Real Liquid Glass | ⚠️ Classic `UISearchBar` in blurred container | ❌ no-op | ❌ no-op |
+
+On unsupported platforms (Android, Web, iOS < 26) the plugin is a graceful no-op — your CSS/HTML fallback continues to work.
 
 ## Install
 
@@ -13,14 +38,15 @@ npm install @ajuarezso/capacitor-liquid-glass
 npx cap sync ios
 ```
 
-iOS minimum target: `15.0`. Real Liquid Glass requires **iOS 26+**; on older versions the native `UITabBar` still renders but without the Liquid Glass effect.
+iOS minimum target: `15.0`. **Real Liquid Glass requires iOS 26+**; on older iOS the native `UITabBar` / `UISearchBar` still renders but without the Liquid Glass material.
 
 ## Quick start
 
-```ts
+### TabBar
+
+```typescript
 import { LiquidGlass } from '@ajuarezso/capacitor-liquid-glass';
 
-// Show the native tab bar
 await LiquidGlass.showTabBar({
   items: [
     { id: '/home',    label: 'Home',    sfSymbol: 'house' },
@@ -30,121 +56,198 @@ await LiquidGlass.showTabBar({
   ],
   selectedIndex: 0,
   tintColor: '#FA7319',
+  tabBarStyle: 'liquidGlass',  // 'default' | 'ultraThin' | 'transparent' | 'liquidGlass'
 });
 
-// Listen for taps
 await LiquidGlass.addListener('tabSelected', ({ id, index }) => {
   console.log('Tab tapped:', id, index);
 });
 
-// Update badge without rebuilding the tab bar
 await LiquidGlass.updateTabBadge({ id: '/cart', badge: '5' });
-
-// Programmatically change the selected tab
 await LiquidGlass.setSelectedTab({ id: '/profile' });
-
-// Hide (e.g. when opening a fullscreen modal)
 await LiquidGlass.hideTabBar();
 ```
 
-## API
+### SearchBar
 
-### `showTabBar(options)`
+```typescript
+await LiquidGlass.showSearchBar({
+  placeholder: 'Search',
+  cancelText: 'Cancel',
+  tintColor: '#FA7319',
+});
 
-| Option          | Type                    | Required | Description                                                 |
-| --------------- | ----------------------- | -------- | ----------------------------------------------------------- |
-| `items`         | `LiquidGlassTabItem[]`  | yes      | At least one item.                                          |
-| `selectedIndex` | `number`                | no       | Initial selection. Defaults to `0`.                         |
-| `tintColor`     | `string` (`#RRGGBB`)    | no       | Color of the selected pill. Defaults to the system tint.    |
+await LiquidGlass.addListener('searchTextChanged', ({ text }) => {
+  console.log('User typed:', text);
+});
+await LiquidGlass.addListener('searchSubmitted', ({ text }) => {
+  console.log('User submitted:', text);
+});
+await LiquidGlass.addListener('searchCancelled', () => {
+  console.log('User tapped cancel');
+});
 
-### `LiquidGlassTabItem`
+await LiquidGlass.clearSearchText();
+await LiquidGlass.hideSearchBar();
+```
 
-```ts
+## API reference
+
+### TabBar
+
+#### `showTabBar(options): Promise<void>`
+
+```typescript
+interface ShowTabBarOptions {
+  items: LiquidGlassTabItem[];
+  selectedIndex?: number;       // default 0
+  tintColor?: string;            // '#RRGGBB'
+  tabBarStyle?: TabBarStyle;     // 'default' | 'ultraThin' | 'transparent' | 'liquidGlass'
+}
+
 interface LiquidGlassTabItem {
-  /** Stable id emitted in `tabSelected` events. */
-  id: string;
-  /** Text under the icon. */
-  label: string;
-  /** SF Symbol name (e.g. 'house.fill'). */
-  sfSymbol: string;
-  /** Optional badge value (e.g. '3' or '•'). */
-  badge?: string;
+  id: string;          // stable id emitted in events
+  label: string;       // text under the icon
+  sfSymbol: string;    // SF Symbol name, e.g. 'house.fill'
+  badge?: string;      // '3' or '•' or undefined
 }
 ```
 
-### `hideTabBar()`
+#### `hideTabBar(): Promise<void>`
 
-Hides the tab bar without destroying it. Use this when opening fullscreen modals, maps, or any UI that should temporarily own the screen. Call `showTabBar(...)` again to restore it.
+Hides without destroying configuration. Use for fullscreen modals / maps.
 
-### `setSelectedTab({ index?, id? })`
+#### `setSelectedTab({ index?, id? }): Promise<void>`
 
-Updates the selected tab programmatically. Useful when the user navigates via a deep link, a button inside a page, or any source other than the tab bar itself.
+Programmatic selection (deep links, internal navigation).
 
-### `updateTabBadge({ id, badge })`
+#### `updateTabBadge({ id, badge }): Promise<void>`
 
-Updates a single tab's badge **without** reconfiguring the whole bar (preserves selection). Pass an empty string or omit `badge` to clear.
+Updates a single badge without reconfiguring the whole bar (preserves selection).
 
-### `getTabBarLayout()`
+#### `getTabBarLayout(): Promise<{ height, bottomSafeArea }>`
 
-Returns the current `{ height, bottomSafeArea }` in points so you can reserve content padding.
+Returns layout in points to reserve content padding.
+
+### SearchBar
+
+#### `showSearchBar(options?): Promise<void>`
+
+```typescript
+interface ShowSearchBarOptions {
+  placeholder?: string;
+  initialText?: string;
+  cancelText?: string;
+  tintColor?: string;
+  hideCancelButton?: boolean;
+}
+```
+
+#### `hideSearchBar(): Promise<void>`
+#### `clearSearchText(): Promise<void>`
 
 ### Events
 
-| Event                  | Payload                                     |
-| ---------------------- | ------------------------------------------- |
-| `tabSelected`          | `{ index: number, id: string }`             |
-| `tabBarLayoutChanged`  | `{ height: number, bottomSafeArea: number }` |
+| event | payload |
+|---|---|
+| `tabSelected` | `{ index: number, id: string }` |
+| `tabBarLayoutChanged` | `{ height: number, bottomSafeArea: number }` |
+| `searchTextChanged` | `{ text: string }` |
+| `searchSubmitted` | `{ text: string }` |
+| `searchCancelled` | `{}` |
 
 ## Angular example
 
-```ts
-import { bindLiquidGlassNav } from './liquid-glass-nav';
+```typescript
+import { Component, inject, signal } from '@angular/core';
+import { LiquidGlass } from '@ajuarezso/capacitor-liquid-glass';
+import { Capacitor } from '@capacitor/core';
+import { Router } from '@angular/router';
 
-export class CustomerLayout {
-  private readonly nav = bindLiquidGlassNav({
-    items: [
-      { id: '/home',    label: 'Home',    sfSymbol: 'house' },
-      { id: '/orders',  label: 'Orders',  sfSymbol: 'list.bullet.clipboard' },
-      { id: '/profile', label: 'Profile', sfSymbol: 'person' },
-    ],
-    isFullscreen: this.isFullscreen, // signal<boolean>
-  });
+@Component({ selector: 'app-shell', template: '<router-outlet />' })
+export class AppShell {
+  private router = inject(Router);
 
-  readonly useNativeTabBar = this.nav.useNativeTabBar;
+  async ngOnInit() {
+    if (!Capacitor.isNativePlatform()) return;
+
+    await LiquidGlass.showTabBar({
+      items: [
+        { id: '/home', label: 'Home', sfSymbol: 'house' },
+        { id: '/cart', label: 'Cart', sfSymbol: 'bag' },
+      ],
+      tabBarStyle: 'liquidGlass',
+    });
+
+    LiquidGlass.addListener('tabSelected', ({ id }) => {
+      this.router.navigate([id]);
+    });
+  }
 }
 ```
 
-See the `example/` folder for a full wiring including router sync and HTML fallback for unsupported platforms.
+For unsupported platforms (Android, Web), render your own CSS / Tailwind tab bar gated by `Capacitor.getPlatform()`.
 
-## Platform behavior
+## Comparison with alternatives
 
-| Widget       | iOS 26+              | iOS 15–25           | Android | Web        |
-| ------------ | -------------------- | ------------------- | ------- | ---------- |
-| TabBar       | ✅ Liquid Glass real | ⚠️ Classic UITabBar | ❌ no-op | ❌ no-op   |
-
-When the plugin is a no-op (Android, Web, iOS &lt; 26), render your own HTML / CSS fallback. The plugin exposes `Capacitor.getPlatform()` and your Angular / React code can conditionally swap to a `backdrop-filter` bar.
+| project | platform | real Liquid Glass? | adoption | active? |
+|---|---|---|---|---|
+| **@ajuarezso/capacitor-liquid-glass** | iOS Capacitor | **yes** (real `UIGlassEffect`) | Anthony Juarez Solis | yes (2026) |
+| CSS `backdrop-filter: blur(...)` | all webviews | no (just static blur) | universal | n/a |
+| `@react-native-community/blur` | React Native | partial (UIBlurEffect, no `UIGlassEffect`) | RN community | yes |
+| `flutter_glassmorphism` | Flutter | no (just CSS-equivalent) | community | yes |
+| Tauri WKWebView native overlays | Tauri | not yet published | n/a | n/a |
 
 ## Why not just CSS `backdrop-filter`?
 
-Because it's not the same thing.
+Because it's a fundamentally different effect:
 
-- **CSS `backdrop-filter`** gives you blur. That's it.
-- **Liquid Glass** gives you blur + *dynamic refraction*, *edge highlights that shift with content*, *morphing between elements*, *touch-reactive deformation*, *tinted / clear variants*, and system-level Dynamic Island integration. These require private Metal shaders that Apple does not expose to `WKWebView`.
+- **CSS `backdrop-filter: blur(20px)`** → just static blur of what's behind. That's it.
+- **iOS 26 Liquid Glass (`UIGlassEffect`)** → blur + dynamic refraction + edge highlights that shift with content motion + morphing between elements (the tab pill that slides) + touch-reactive deformation + tint variants + system Dynamic Island integration. These use private Metal shaders Apple does **not** expose to WKWebView.
 
-This plugin is the shortest path to Apple-authentic Liquid Glass from a Capacitor app.
+If you only need static glassmorphism for a marketing site or non-iOS app, just use CSS. If you need the authentic Apple iOS 26 look on a Capacitor app running on iPhone, this plugin is the shortest path.
 
 ## Roadmap
 
-- [x] `TabBar`
-- [ ] `NavigationBar` (large title, leading/trailing items)
-- [ ] `Toolbar` (floating toolbar like Safari)
-- [ ] `Alert` (standard and destructive)
-- [ ] `Sheet` (with detents)
-- [ ] `Menu` / `Popover`
+- [x] **v0.1**: TabBar with Liquid Glass background
+- [x] **v0.2**: SearchBar overlay
+- [x] **v0.3**: Style variants (`'default'` / `'ultraThin'` / `'transparent'` / `'liquidGlass'`)
+- [ ] NavigationBar (large title, leading/trailing items)
+- [ ] Toolbar (floating toolbar like Safari)
+- [ ] Alert (standard and destructive)
+- [ ] Sheet with detents
+- [ ] Menu / Popover
 - [ ] Android Material 3 Expressive equivalents
 
 PRs welcome.
 
+## Limitations
+
+1. **iOS 26 required for real Liquid Glass**. On iOS 15-25 the plugin still renders native `UITabBar` / `UISearchBar` but without the Liquid Glass material — falls back to `UIBlurEffect.systemThinMaterial`.
+
+2. **Android is a no-op**. Material 3 Expressive equivalents are on the roadmap but not yet shipped. Render your own fallback.
+
+3. **The native overlay floats above the WebView**, so it does not animate with router transitions of your web router. Use `hideTabBar()` when entering fullscreen routes that shouldn't show the tab bar.
+
+4. **App Store**: this plugin uses public Apple APIs only. No private API risk.
+
+## Keywords for discoverability
+
+This plugin solves: capacitor liquid glass, ios 26 liquid glass capacitor, capacitor tab bar native, capacitor search bar native, ionic liquid glass, ios 26 UIGlassEffect capacitor, capacitor glassmorphism native, capacitor native chrome, capacitor UITabBar, capacitor UISearchBar, capacitor angular tab bar ios, react native vs capacitor liquid glass.
+
+Related projects this is an alternative to:
+- CSS `backdrop-filter` (not real Liquid Glass, just blur)
+- `@capacitor/status-bar` (different concern — status bar only)
+- React Native blur libraries (different framework)
+- Capacitor community plugins for tab bars (use HTML/CSS, not native Liquid Glass)
+
+## Repository
+
+- Source: https://github.com/anthonyjuarezsolis/capacitor-liquid-glass
+- Issues: https://github.com/anthonyjuarezsolis/capacitor-liquid-glass/issues
+- npm: https://www.npmjs.com/package/@ajuarezso/capacitor-liquid-glass
+- Built and verified on iPhone 17 Pro Max running iOS 26.5
+
 ## License
 
-MIT © Anthony Juarez Solis
+MIT © Anthony Juarez Solis — see [LICENSE](./LICENSE)

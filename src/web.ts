@@ -3,6 +3,7 @@ import { WebPlugin } from '@capacitor/core';
 import type {
   LiquidGlassPlugin,
   SetSelectedTabOptions,
+  ShowSearchBarOptions,
   ShowTabBarOptions,
   TabBarLayoutEvent,
   UpdateTabBadgeOptions,
@@ -33,5 +34,17 @@ export class LiquidGlassWeb extends WebPlugin implements LiquidGlassPlugin {
 
   async getTabBarLayout(): Promise<TabBarLayoutEvent> {
     return { height: 0, bottomSafeArea: 0 };
+  }
+
+  async showSearchBar(_options?: ShowSearchBarOptions): Promise<void> {
+    // no-op on web — caller should render its own DOM search input.
+  }
+
+  async hideSearchBar(): Promise<void> {
+    // no-op on web
+  }
+
+  async clearSearchText(): Promise<void> {
+    // no-op on web
   }
 }
