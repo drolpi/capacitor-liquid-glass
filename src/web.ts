@@ -3,6 +3,7 @@ import { WebPlugin } from '@capacitor/core';
 import type {
   LiquidGlassPlugin,
   SetSelectedTabOptions,
+  SetTabBarBoundsOptions,
   ShowSearchBarOptions,
   ShowTabBarOptions,
   TabBarLayoutEvent,
@@ -34,6 +35,10 @@ export class LiquidGlassWeb extends WebPlugin implements LiquidGlassPlugin {
 
   async getTabBarLayout(): Promise<TabBarLayoutEvent> {
     return { height: 0, bottomSafeArea: 0 };
+  }
+
+  async setTabBarBounds(_options: SetTabBarBoundsOptions): Promise<void> {
+    // no-op on web — native-only positioning.
   }
 
   async showSearchBar(_options?: ShowSearchBarOptions): Promise<void> {

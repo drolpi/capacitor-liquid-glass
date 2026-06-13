@@ -12,6 +12,7 @@ public class LiquidGlassPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "setSelectedTab", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "updateTabBadge", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getTabBarLayout", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setTabBarBounds", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "showSearchBar", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "hideSearchBar", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "clearSearchText", returnType: CAPPluginReturnPromise),
@@ -28,6 +29,10 @@ public class LiquidGlassPlugin: CAPPlugin, CAPBridgedPlugin {
         let selectedIndex = call.getInt("selectedIndex") ?? 0
         let tintHex = call.getString("tintColor")
         let styleRaw = call.getString("tabBarStyle") ?? "default"
+        // Optional binding rect. When present the bar is positioned to match an
+        // HTML element instead of being pinned to the bottom (the JS layer
+        // measures the element and injects this). Invalid/absent → bottom-pinned.
+        let bounds = call.getObject("bounds").flatMap { Self.rect(from: $0) }
 
         let items = rawItems.compactMap { LiquidGlassTabItem(dictionary: $0) }
         guard !items.isEmpty else {
@@ -37,9 +42,34 @@ public class LiquidGlassPlugin: CAPPlugin, CAPBridgedPlugin {
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            self.presentTabBar(items: items, selectedIndex: selectedIndex, tintHex: tintHex, styleRaw: styleRaw)
+            self.presentTabBar(items: items, selectedIndex: selectedIndex, tintHex: tintHex, styleRaw: styleRaw, bounds: bounds)
             call.resolve()
         }
+    }
+
+    @objc func setTabBarBounds(_ call: CAPPluginCall) {
+        guard let boundsDict = call.getObject("bounds"), let rect = Self.rect(from: boundsDict) else {
+            call.reject("bounds {x, y, width, height} is required")
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.tabBarOverlay?.setBounds(rect)
+            call.resolve()
+        }
+    }
+
+    /// Parses a `{x, y, width, height}` JS object into a `CGRect`. Tolerates
+    /// numbers arriving as `Double`, `Int` or `NSNumber` across the bridge.
+    private static func rect(from dict: JSObject) -> CGRect? {
+        func num(_ value: Any?) -> Double? {
+            if let d = value as? Double { return d }
+            if let n = value as? NSNumber { return n.doubleValue }
+            if let i = value as? Int { return Double(i) }
+            return nil
+        }
+        guard let x = num(dict["x"]), let y = num(dict["y"]),
+              let w = num(dict["width"]), let h = num(dict["height"]) else { return nil }
+        return CGRect(x: x, y: y, width: w, height: h)
     }
 
     @objc func hideTabBar(_ call: CAPPluginCall) {
@@ -151,7 +181,7 @@ public class LiquidGlassPlugin: CAPPlugin, CAPBridgedPlugin {
         searchOverlay?.show(on: window)
     }
 
-    private func presentTabBar(items: [LiquidGlassTabItem], selectedIndex: Int, tintHex: String?, styleRaw: String) {
+    private func presentTabBar(items: [LiquidGlassTabItem], selectedIndex: Int, tintHex: String?, styleRaw: String, bounds: CGRect?) {
         // CRÍTICO: usar `bridge?.viewController` (el VC que contiene el
         // WKWebView de Capacitor) en lugar del `rootViewController` del
         // window. iOS 26 aplica Liquid Glass automáticamente al UITabBar
@@ -174,7 +204,9 @@ public class LiquidGlassPlugin: CAPPlugin, CAPBridgedPlugin {
         }
 
         let style = LiquidGlassTabBarStyle(rawValue: styleRaw) ?? .default
-        tabBarOverlay?.attach(to: hostVC)
+        // `bridge?.webView` is needed to convert the JS rect (viewport CSS px)
+        // into the host VC's coordinate space when binding to an HTML element.
+        tabBarOverlay?.attach(to: hostVC, bounds: bounds, webView: bridge?.webView)
         tabBarOverlay?.configure(items: items, selectedIndex: selectedIndex, tintHex: tintHex, style: style)
         tabBarOverlay?.show()
     }

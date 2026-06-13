@@ -66,6 +66,23 @@ final class LiquidGlassTabBarOverlay: UIViewController {
     private let tabBar = UITabBar()
     private var items: [LiquidGlassTabItem] = []
     private weak var hostVC: UIViewController?
+    /// WKWebView of the Capacitor bridge — used to convert the JS rect (viewport
+    /// CSS px) into the host VC's coordinate space when bound to an HTML element.
+    private weak var webView: UIView?
+
+    /// Currently-active container constraints (bottom-pinned OR bound), so a
+    /// re-`attach`/mode-switch can deactivate the previous set cleanly.
+    private var activeConstraints: [NSLayoutConstraint] = []
+    /// Mutable bound-mode geometry. Kept as properties so `setBounds` mutates
+    /// `.constant` (no detach/reattach → VC hierarchy stays intact and the iOS
+    /// 26 Liquid Glass auto-adopt is never re-triggered/lost).
+    private var boundTop: NSLayoutConstraint?
+    private var boundLeading: NSLayoutConstraint?
+    private var boundWidth: NSLayoutConstraint?
+    private var boundHeight: NSLayoutConstraint?
+    /// `true` when the container tracks an HTML element rect; `false` when
+    /// pinned to the bottom of the host (default).
+    private var isBoundMode = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -101,35 +118,142 @@ final class LiquidGlassTabBarOverlay: UIViewController {
 
     /// Adjunta este view controller como child del view controller que
     /// contiene el WKWebView de Capacitor (`bridge?.viewController`).
-    /// Idempotente: si ya está adjuntado al mismo host, no-op.
-    func attach(to hostVC: UIViewController?) {
+    ///
+    /// - `bounds == nil` → **bottom-pinned** (comportamiento default histórico):
+    ///   leading/trailing/bottom al host, sin top — la altura sale del intrinsic
+    ///   content size del UITabBar (~50pt + safe-area-bottom).
+    /// - `bounds != nil` (y válido) → **bound mode**: el container se posiciona
+    ///   para coincidir con el rect de un elemento HTML, vía constraints
+    ///   mutables top/leading/width/height (NUNCA `setFrame` — ver `setBounds`).
+    ///
+    /// Idempotente respecto al parenting: si ya es child del mismo host no
+    /// re-adjunta, pero SÍ re-evalúa el layout (permite cambiar de modo o de
+    /// rect entre llamadas a `showTabBar`).
+    func attach(to hostVC: UIViewController?, bounds: CGRect?, webView: UIView?) {
         guard let hostVC else { return }
-        if self.parent === hostVC { return }
-        // Si está adjuntado a otro VC (cambio de host entre sesiones),
-        // detachar primero antes de re-adjuntar.
-        if self.parent != nil {
-            self.willMove(toParent: nil)
-            self.view.removeFromSuperview()
-            self.removeFromParent()
+        self.webView = webView
+
+        let wantsBound = bounds.map { $0.width > 0 && $0.height > 0 } ?? false
+
+        // No-op idempotente del PATH DEFAULT (bottom-pinned): re-mostrar el bar
+        // en el MISMO host sin binding (re-config de badge / cambio de route /
+        // liberación de modal — el consumer lo dispara agresivamente) debe NO
+        // tocar el layout del container, exactamente como antes de que existiera
+        // bound mode. Sin este early-return cada re-llamada haría
+        // deactivate+activate de las 3 constraints + un tabBarLayoutChanged de
+        // más (regresión detectada en review). Solo aplica cuando ya estamos
+        // bottom-pinned con constraints activas y NO se pide binding.
+        if self.parent === hostVC, !wantsBound, !isBoundMode, !activeConstraints.isEmpty {
+            return
         }
 
-        hostVC.addChild(self)
-        hostVC.view.addSubview(self.view)
-        self.view.translatesAutoresizingMaskIntoConstraints = false
-        // CRÍTICO: `didMove(toParent:)` ANTES de activar constraints. iOS 26
-        // ejecuta el primer layout pass al didMove; tener el parenting
-        // completo antes de que el sistema mida el UITabBar es lo que el
-        // heurístico de Liquid Glass auto-adopt espera (patrón stay-liquid).
-        self.didMove(toParent: hostVC)
-        // SIN top constraint — la altura del view se deriva del intrinsic
-        // content size del UITabBar dentro (~50pt + safe-area-bottom).
-        NSLayoutConstraint.activate([
-            self.view.leadingAnchor.constraint(equalTo: hostVC.view.leadingAnchor),
-            self.view.trailingAnchor.constraint(equalTo: hostVC.view.trailingAnchor),
-            self.view.bottomAnchor.constraint(equalTo: hostVC.view.bottomAnchor),
-        ])
+        if self.parent !== hostVC {
+            // Si está adjuntado a otro VC (cambio de host entre sesiones),
+            // detachar primero antes de re-adjuntar. Reseteamos TODO el estado
+            // de modo/constraints para no quedar apuntando a constraints muertas
+            // del host viejo (defensa en profundidad — review).
+            if self.parent != nil {
+                NSLayoutConstraint.deactivate(activeConstraints)
+                activeConstraints = []
+                boundTop = nil; boundLeading = nil; boundWidth = nil; boundHeight = nil
+                isBoundMode = false
+                self.willMove(toParent: nil)
+                self.view.removeFromSuperview()
+                self.removeFromParent()
+            }
+            hostVC.addChild(self)
+            hostVC.view.addSubview(self.view)
+            self.view.translatesAutoresizingMaskIntoConstraints = false
+            // CRÍTICO: `didMove(toParent:)` ANTES de activar constraints. iOS 26
+            // ejecuta el primer layout pass al didMove; tener el parenting
+            // completo antes de que el sistema mida el UITabBar es lo que el
+            // heurístico de Liquid Glass auto-adopt espera (patrón stay-liquid).
+            self.didMove(toParent: hostVC)
+        }
         self.hostVC = hostVC
+
+        // `width > 0 && height > 0` es obligatorio: un container medido en 0×0 en
+        // el primer layout pass es la única forma realista de PERDER el adopt de
+        // Liquid Glass. Si el rect llega vacío caemos a bottom-pinned y el
+        // siguiente `setBounds` con rect válido cambia a bound mode.
+        if let bounds, wantsBound {
+            applyBoundConstraints(bounds, hostVC: hostVC)
+        } else {
+            applyBottomPinned(hostVC: hostVC)
+        }
         emitLayout()
+    }
+
+    /// Default: container pegado al bottom del host, ancho completo, altura
+    /// intrínseca del UITabBar. Idéntico al comportamiento previo a bound mode.
+    private func applyBottomPinned(hostVC: UIViewController) {
+        NSLayoutConstraint.deactivate(activeConstraints)
+        boundTop = nil; boundLeading = nil; boundWidth = nil; boundHeight = nil
+        isBoundMode = false
+        let constraints = [
+            view.leadingAnchor.constraint(equalTo: hostVC.view.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: hostVC.view.trailingAnchor),
+            view.bottomAnchor.constraint(equalTo: hostVC.view.bottomAnchor),
+        ]
+        NSLayoutConstraint.activate(constraints)
+        activeConstraints = constraints
+    }
+
+    /// Bound mode: posiciona el container al rect del elemento HTML mediante 4
+    /// constraints mutables (top/leading/width/height). Se usan CONSTRAINTS y no
+    /// `setFrame` a propósito: un `setFrame` pelea contra el Auto Layout pass del
+    /// host y puede resolver a `.zero` justo en el primer layout pass que iOS 26
+    /// inspecciona para el adopt → bar medido 0×0 → sin Liquid Glass.
+    private func applyBoundConstraints(_ rect: CGRect, hostVC: UIViewController) {
+        NSLayoutConstraint.deactivate(activeConstraints)
+        isBoundMode = true
+        let r = convertRectToHost(rect, hostVC: hostVC)
+        let top = view.topAnchor.constraint(equalTo: hostVC.view.topAnchor, constant: r.origin.y)
+        let leading = view.leadingAnchor.constraint(equalTo: hostVC.view.leadingAnchor, constant: r.origin.x)
+        let width = view.widthAnchor.constraint(equalToConstant: r.size.width)
+        let height = view.heightAnchor.constraint(equalToConstant: r.size.height)
+        NSLayoutConstraint.activate([top, leading, width, height])
+        boundTop = top; boundLeading = leading; boundWidth = width; boundHeight = height
+        activeConstraints = [top, leading, width, height]
+    }
+
+    /// Reposiciona el container a un nuevo rect (driven por el ResizeObserver/
+    /// scroll del lado JS). Solo muta `.constant` de las constraints existentes
+    /// — sin re-parenting, sin tocar el UITabBar — envuelto en `CATransaction`
+    /// con acciones implícitas desactivadas para que el movimiento sea snap (no
+    /// un lerp animado que se vería como jitter al scrollear).
+    func setBounds(_ rect: CGRect) {
+        // Bar oculto (post hideTabBar): no mutar constraints ni emitir layout de
+        // un bar que no se ve — evita estado inconsistente si un rAF en vuelo o
+        // una llamada low-level llega tras el hide (review).
+        guard !view.isHidden else { return }
+        guard rect.width > 0, rect.height > 0, let hostVC else { return }
+        // Primer rect válido tras un fallback a bottom-pinned → entrar a bound mode.
+        guard isBoundMode, let boundTop, let boundLeading, let boundWidth, let boundHeight else {
+            applyBoundConstraints(rect, hostVC: hostVC)
+            emitLayout()
+            return
+        }
+        let r = convertRectToHost(rect, hostVC: hostVC)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        boundTop.constant = r.origin.y
+        boundLeading.constant = r.origin.x
+        boundWidth.constant = r.size.width
+        boundHeight.constant = r.size.height
+        hostVC.view.layoutIfNeeded()
+        CATransaction.commit()
+        emitLayout()
+    }
+
+    /// Convierte el rect COMPLETO (viewport CSS px == puntos del bounds del
+    /// webView) al espacio de coordenadas del host VC. Convertir el rect entero
+    /// — no solo el origen — cubre el caso de un webView insetado o escalado
+    /// respecto al host (sin esto, origen y tamaño quedarían en espacios
+    /// distintos; review). Con webView nil, fallback al rect crudo.
+    private func convertRectToHost(_ rect: CGRect, hostVC: UIViewController) -> CGRect {
+        guard let webView else { return rect }
+        return webView.convert(rect, to: hostVC.view)
     }
 
     /// Aplica el appearance correspondiente al estilo solicitado.

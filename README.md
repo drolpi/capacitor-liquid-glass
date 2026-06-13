@@ -100,9 +100,10 @@ await LiquidGlass.hideSearchBar();
 ```typescript
 interface ShowTabBarOptions {
   items: LiquidGlassTabItem[];
-  selectedIndex?: number;       // default 0
-  tintColor?: string;            // '#RRGGBB'
-  tabBarStyle?: TabBarStyle;     // 'default' | 'ultraThin' | 'transparent' | 'liquidGlass'
+  selectedIndex?: number;            // default 0
+  tintColor?: string;                 // '#RRGGBB'
+  tabBarStyle?: TabBarStyle;          // 'default' | 'ultraThin' | 'transparent' | 'liquidGlass'
+  containerElement?: string | HTMLElement;  // bind to an HTML element (see below)
 }
 
 interface LiquidGlassTabItem {
@@ -112,6 +113,59 @@ interface LiquidGlassTabItem {
   badge?: string;      // '3' or '•' or undefined
 }
 ```
+
+#### `containerElement` — bind the bar to an HTML element (iOS)
+
+By default the tab bar pins itself to the bottom of the screen. Pass
+`containerElement` (an element `id`, a CSS selector, or the `HTMLElement`) to
+instead **glue the native bar to the bounds of an element in your layout** —
+the same idea as the Capacitor Google Maps placeholder element. ([#1](https://github.com/anthonyjuarezsolis/capacitor-liquid-glass/issues/1))
+
+```typescript
+await LiquidGlass.showTabBar({
+  items: [...],
+  containerElement: 'tab-bar-slot',  // <div id="tab-bar-slot"> in your DOM
+});
+```
+
+```html
+<!-- A placeholder that reserves where the native bar should sit. -->
+<div id="tab-bar-slot" style="
+  position: fixed; left: 16px; right: 16px; bottom: 24px;
+  height: calc(64px + env(safe-area-inset-bottom));">
+</div>
+```
+
+How it works:
+
+- The plugin measures the element's `getBoundingClientRect()` and positions the
+  native bar (an on-top overlay) to match — CSS px map 1:1 to UIKit points in a
+  WKWebView, so no scaling is applied.
+- It re-syncs automatically on `ResizeObserver` + scroll + rotation + keyboard
+  (`visualViewport`), all coalesced through `requestAnimationFrame` so a 120 Hz
+  scroll fires at most one reposition per frame.
+- The element is a **layout placeholder only** — keep it empty/transparent; the
+  native bar renders on top of it. Resolution and measurement happen in JS; the
+  `HTMLElement` never crosses the native bridge.
+
+> ⚠️ **Size the element to include `env(safe-area-inset-bottom)` when it sits at
+> the bottom edge.** The native bar fills exactly the element's rect — if the
+> element is shorter than the bar's natural height (~49 pt + safe area on
+> notched iPhones) the labels/icons get clipped. If the measured rect is `0` in
+> either dimension the plugin falls back to bottom-pinned.
+
+> ℹ️ Pure **position** changes of a `position: fixed` element that fire no
+> `scroll`/`resize`/`ResizeObserver` event won't auto re-sync. Call
+> `showTabBar(...)` again (cheap — it re-measures) after such a move, or use the
+> low-level `setTabBarBounds(...)` yourself.
+
+#### `setTabBarBounds({ bounds }): Promise<void>`
+
+Low-level escape hatch (iOS): reposition the bar to an explicit rect
+(`{ x, y, width, height }` in CSS px, viewport-relative). The binding layer
+drives this for you when you pass `containerElement`; call it directly only if
+you measure the element yourself. No-op on web/Android and when the bar is not
+shown.
 
 #### `hideTabBar(): Promise<void>`
 
@@ -212,6 +266,7 @@ If you only need static glassmorphism for a marketing site or non-iOS app, just 
 - [x] **v0.1**: TabBar with Liquid Glass background
 - [x] **v0.2**: SearchBar overlay
 - [x] **v0.3**: Style variants (`'default'` / `'ultraThin'` / `'transparent'` / `'liquidGlass'`)
+- [x] **v0.4**: Bind the TabBar to an HTML element (`containerElement`) ([#1](https://github.com/anthonyjuarezsolis/capacitor-liquid-glass/issues/1))
 - [ ] NavigationBar (large title, leading/trailing items)
 - [ ] Toolbar (floating toolbar like Safari)
 - [ ] Alert (standard and destructive)
@@ -230,6 +285,8 @@ PRs welcome.
 3. **The native overlay floats above the WebView**, so it does not animate with router transitions of your web router. Use `hideTabBar()` when entering fullscreen routes that shouldn't show the tab bar.
 
 4. **App Store**: this plugin uses public Apple APIs only. No private API risk.
+
+5. **`containerElement` binding** re-syncs on resize/scroll/rotation/keyboard, but **not** on a pure position move of a `position: fixed` element that emits no DOM event. Re-call `showTabBar(...)` (or `setTabBarBounds(...)`) after such a move. Also size the bound element to include the bottom safe area (see the `containerElement` docs above) or the bar gets clipped.
 
 ## Keywords for discoverability
 

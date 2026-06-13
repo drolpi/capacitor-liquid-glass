@@ -32,6 +32,49 @@ export interface ShowTabBarOptions {
   tintColor?: string;
   /** Visual style of the tab bar background. Defaults to `'default'`. */
   tabBarStyle?: TabBarStyle;
+  /**
+   * Opt-in: bind the native tab bar to an HTML element's bounds instead of
+   * pinning it to the bottom of the screen. Pass an element `id`, a CSS
+   * selector, or the `HTMLElement` itself. The plugin measures the element and
+   * keeps the native bar glued to it across resize / rotation / keyboard /
+   * scroll.
+   *
+   * When omitted (default), the bar stays pinned to the bottom of the host view
+   * — identical to previous behaviour, no regression.
+   *
+   * Notes:
+   *  - iOS only. Ignored on web/Android.
+   *  - The element acts purely as a layout placeholder; size it (width/height
+   *    incl. safe-area) the way you want the native bar to look. The native bar
+   *    renders on top of the WebView at the element's rect.
+   *  - The `HTMLElement`/selector is resolved and stripped in the JS layer; it
+   *    never crosses the native bridge.
+   */
+  containerElement?: string | HTMLElement;
+  /**
+   * Low-level escape hatch: explicit bounds (CSS px, viewport-relative) for the
+   * native bar. Normally you pass `containerElement` and the plugin computes
+   * this for you. The JS binding layer populates this field before the call
+   * reaches native; set it directly only if you manage measurement yourself.
+   */
+  bounds?: TabBarBounds;
+}
+
+/**
+ * Rect (CSS px, viewport-relative — i.e. straight from
+ * `Element.getBoundingClientRect()`) used to position the native tab bar when
+ * bound to an HTML element. In a Capacitor WKWebView, CSS px map 1:1 to UIKit
+ * points, so no devicePixelRatio scaling is applied.
+ */
+export interface TabBarBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface SetTabBarBoundsOptions {
+  bounds: TabBarBounds;
 }
 
 export interface SetSelectedTabOptions {
@@ -104,6 +147,14 @@ export interface LiquidGlassPlugin {
 
   /** Current layout of the tab bar (height + safe area). */
   getTabBarLayout(): Promise<TabBarLayoutEvent>;
+
+  /**
+   * Low-level: reposition the native tab bar to an explicit rect (CSS px,
+   * viewport-relative). Driven automatically by the JS binding layer when
+   * `showTabBar` was called with `containerElement`; call it directly only if
+   * you manage element measurement yourself. No-op if the bar is not shown.
+   */
+  setTabBarBounds(options: SetTabBarBoundsOptions): Promise<void>;
 
   /** Emitted every time the user taps a tab. */
   addListener(
